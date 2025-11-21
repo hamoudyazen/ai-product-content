@@ -1,9 +1,14 @@
-import { authenticate } from "../shopify.server";
+import { parseShopifyWebhook } from "../server/shopifyWebhook.server";
 
 export const action = async ({ request }) => {
-  const { shop, topic, payload } = await authenticate.webhook(request);
+  const result = await parseShopifyWebhook(request);
 
-  console.log(`[${topic}] Received for ${shop}`, payload);
+  if (!result.valid) {
+    return new Response(null, { status: 401 });
+  }
+
+  const { shopDomain, topic, payload } = result;
+  console.log(`[${topic}] Received for ${shopDomain}`, payload);
 
   const body = {
     data: [],

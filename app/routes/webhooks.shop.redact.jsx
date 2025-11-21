@@ -1,13 +1,18 @@
-import { authenticate } from "../shopify.server";
+import { parseShopifyWebhook } from "../server/shopifyWebhook.server";
 import { wipeShopRecords, wipeShopSessions } from "../server/shopCleanup.server";
 
 export const action = async ({ request }) => {
-  const { shop, topic } = await authenticate.webhook(request);
+  const result = await parseShopifyWebhook(request);
 
-  console.log(`[${topic}] Received for ${shop}`);
+  if (!result.valid) {
+    return new Response(null, { status: 401 });
+  }
 
-  await wipeShopSessions(shop);
-  await wipeShopRecords(shop);
+  const { shopDomain, topic } = result;
+  console.log(`[${topic}] Received for ${shopDomain}`);
+
+  await wipeShopSessions(shopDomain);
+  await wipeShopRecords(shopDomain);
 
   return new Response(null, { status: 200 });
 };
