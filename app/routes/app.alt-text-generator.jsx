@@ -715,6 +715,21 @@ export default function AltTextGeneratorPage() {
   const [selectedProducts, setSelectedProducts] = useState(
     productRows.map((product) => product.id),
   );
+  const [imageScope, setImageScope] = useState("main");
+  const getImageTargetCount = useCallback(
+    (productId) => {
+      const product = productLookup.get(productId);
+      const availableImages = Math.max(0, Number(product?.imageCount) || 0);
+      if (availableImages === 0) {
+        return 0;
+      }
+      if (imageScope === "all") {
+        return availableImages;
+      }
+      return 1;
+    },
+    [productLookup, imageScope],
+  );
   const imageCountsByProduct = useMemo(() => {
     return selectedProducts.reduce((acc, productId) => {
       acc[productId] = getImageTargetCount(productId);
@@ -833,23 +848,6 @@ export default function AltTextGeneratorPage() {
   useEffect(() => {
     setSelectedProducts(productRows.map((product) => product.id));
   }, [productRows]);
-
-  const [imageScope, setImageScope] = useState("main");
-
-  const getImageTargetCount = useCallback(
-    (productId) => {
-      const product = productLookup.get(productId);
-      const availableImages = Math.max(0, Number(product?.imageCount) || 0);
-      if (availableImages === 0) {
-        return 0;
-      }
-      if (imageScope === "all") {
-        return availableImages;
-      }
-      return 1;
-    },
-    [productLookup, imageScope],
-  );
 
   const totalSelectedTargets = selectedProducts.length;
   const totalImageTargets = useMemo(
