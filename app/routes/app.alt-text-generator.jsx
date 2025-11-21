@@ -6,6 +6,7 @@ import { authenticate } from "../shopify.server";
 import { getOrCreateShopCredit } from "../server/shopCredit.server";
 import { rateProductContent } from "../utils/productQuality";
 import { calculateAltTextItems, clampImageTargetCount } from "../utils/creditMath";
+import { PLAN_CONFIG, DEFAULT_PLAN } from "../utils/planConfig";
 
 const demoRawProduct = (product) => {
   const fallbackDescription = `<p>${product.title} is a demo product used to populate the table.</p>`;
@@ -489,6 +490,106 @@ const templateCategories = [
 
 
 const PAGE_SIZE = 10;
+const PRODUCTS_PAGE_SIZE = 50;
+
+const ALT_TEXT_PRODUCTS_QUERY = `#graphql
+  query AltTextProducts($first: Int!, $cursor: String) {
+    products(first: $first, after: $cursor) {
+      edges {
+        cursor
+        node {
+          id
+          title
+          status
+          handle
+          productType
+          vendor
+          tags
+          descriptionHtml
+          options {
+            name
+            values
+          }
+          variants(first: 25) {
+            edges {
+              node {
+                id
+                title
+                sku
+                selectedOptions {
+                  name
+                  value
+                }
+              }
+            }
+          }
+          collections(first: 10) {
+            edges {
+              node {
+                id
+                title
+                handle
+              }
+            }
+          }
+          metafields(first: 20) {
+            edges {
+              node {
+                namespace
+                key
+                value
+              }
+            }
+          }
+          seo {
+            title
+            description
+          }
+          featuredImage {
+            url
+            altText
+          }
+          images(first: 50) {
+            edges {
+              node {
+                id
+              }
+            }
+          }
+        }
+      }
+      pageInfo {
+        hasNextPage
+      }
+    }
+  }
+`;
+
+const fetchAllProductNodesWithImages = async (admin) => {
+  const nodes = [];
+  let cursor = null;
+  let hasNextPage = true;
+
+  while (hasNextPage) {
+    const response = await admin.graphql(ALT_TEXT_PRODUCTS_QUERY, {
+      variables: { first: PRODUCTS_PAGE_SIZE, cursor },
+    });
+    const json = await response.json();
+    const edges = json?.data?.products?.edges ?? [];
+    edges.forEach((edge) => {
+      if (edge?.node) {
+        nodes.push(edge.node);
+      }
+    });
+    hasNextPage = Boolean(json?.data?.products?.pageInfo?.hasNextPage);
+    cursor = edges.length ? edges[edges.length - 1].cursor : null;
+    if (hasNextPage && !cursor) {
+      hasNextPage = false;
+    }
+  }
+
+  return nodes;
+};
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -497,79 +598,9 @@ export const loader = async ({ request }) => {
   const hostParam = url.searchParams.get("host") || null;
 
   try {
-    const response = await admin.graphql(
-      `#graphql
-        query BulkGenerationProducts {
-          products(first: 20) {
-            edges {
-              node {
-                id
-                title
-                status
-                handle
-                productType
-                vendor
-                tags
-                descriptionHtml
-                options {
-                  name
-                  values
-                }
-                variants(first: 25) {
-                  edges {
-                    node {
-                      id
-                      title
-                      sku
-                      selectedOptions {
-                        name
-                        value
-                      }
-                    }
-                  }
-                }
-                collections(first: 10) {
-                  edges {
-                    node {
-                      id
-                      title
-                      handle
-                    }
-                  }
-                }
-                metafields(first: 20) {
-                  edges {
-                    node {
-                      namespace
-                      key
-                      value
-                    }
-                  }
-                }
-                seo {
-                  title
-                  description
-                }
-                featuredImage {
-                  url
-                  altText
-                }
-                images(first: 50) {
-                  edges {
-                    node {
-                      id
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }`,
-    );
-
-    const data = await response.json();
+    const productNodes = await fetchAllProductNodesWithImages(admin);
     const products =
-      data?.data?.products?.edges?.map(({ node }) => {
+      productNodes?.map((node) => {
         const options =
           node.options?.map((option) => ({
             name: option?.name,
@@ -628,12 +659,14 @@ export const loader = async ({ request }) => {
       orderBy: { createdAt: "desc" },
     });
     const creditRecord = await getOrCreateShopCredit(shopDomain);
+    const planId = creditRecord?.currentPlan || DEFAULT_PLAN;
     return {
       products,
       hasActiveJob: Boolean(activeJob),
       activeJobId: activeJob?.id ?? null,
       hostParam,
       creditBalance: creditRecord?.creditsBalance ?? 0,
+      planId,
     };
   } catch (error) {
     console.error("Failed to load products for alt text generator", error);
@@ -643,6 +676,7 @@ export const loader = async ({ request }) => {
       activeJobId: null,
       hostParam,
       creditBalance: 0,
+      planId: DEFAULT_PLAN,
     };
   }
 };
@@ -654,6 +688,7 @@ export default function AltTextGeneratorPage() {
     activeJobId: initialActiveJobId = null,
     hostParam,
     creditBalance = 0,
+    planId: initialPlanId = DEFAULT_PLAN,
   } = useLoaderData();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -712,9 +747,13 @@ export default function AltTextGeneratorPage() {
     }, {});
   }, []);
   const [resourceTab, setResourceTab] = useState("products");
-  const [selectedProducts, setSelectedProducts] = useState(
-    productRows.map((product) => product.id),
-  );
+  const [selectedProducts, setSelectedProducts] = useState([]);
+  const [planId, setPlanId] = useState(initialPlanId);
+  useEffect(() => {
+    setPlanId(initialPlanId);
+  }, [initialPlanId]);
+  const planConfig = PLAN_CONFIG[planId] || PLAN_CONFIG[DEFAULT_PLAN];
+  const maxProductsPerJob = planConfig?.maxProductsPerJob ?? Infinity;
   const [imageScope, setImageScope] = useState("main");
   const getImageTargetCount = useCallback(
     (productId) => {
@@ -736,6 +775,8 @@ export default function AltTextGeneratorPage() {
       return acc;
     }, {});
   }, [selectedProducts, getImageTargetCount]);
+  const productSelectionLimitReached =
+    maxProductsPerJob !== Infinity && selectedProducts.length >= maxProductsPerJob;
   const [selectedCollections, setSelectedCollections] = useState([]);
   const [pageByTab, setPageByTab] = useState({ products: 1, collections: 1 });
   const selectedTypes = generationTypes.map((type) => type.id);
@@ -846,8 +887,22 @@ export default function AltTextGeneratorPage() {
   }, [resourceTab, searchQuery]);
 
   useEffect(() => {
-    setSelectedProducts(productRows.map((product) => product.id));
-  }, [productRows]);
+    setSelectedProducts((current) => {
+      const validIds = productRows.map((product) => product.id);
+      const filtered = current.filter((id) => validIds.includes(id));
+      if (!filtered.length && validIds.length) {
+        const defaults =
+          maxProductsPerJob === Infinity
+            ? validIds
+            : validIds.slice(0, maxProductsPerJob);
+        return defaults;
+      }
+      if (maxProductsPerJob !== Infinity && filtered.length > maxProductsPerJob) {
+        return filtered.slice(0, maxProductsPerJob);
+      }
+      return filtered;
+    });
+  }, [productRows, maxProductsPerJob]);
 
   const totalSelectedTargets = selectedProducts.length;
   const totalImageTargets = useMemo(
@@ -919,25 +974,66 @@ export default function AltTextGeneratorPage() {
     });
   }, [resourceTab, totalPages]);
 
+  const notifyPlanLimit = () => {
+    if (maxProductsPerJob === Infinity) {
+      return;
+    }
+    shopify.toast.show?.(
+      `Your ${planConfig.title} plan supports up to ${maxProductsPerJob.toLocaleString()} products per bulk job.`,
+    );
+  };
+
   const toggleResource = (id) => {
-    const setter = resourceTab === "products" ? setSelectedProducts : setSelectedCollections;
-    setter((current) =>
-      current.includes(id)
-        ? current.filter((value) => value !== id)
-        : [...current, id],
+    if (resourceTab === "products") {
+      setSelectedProducts((current) => {
+        if (current.includes(id)) {
+          return current.filter((value) => value !== id);
+        }
+        if (maxProductsPerJob !== Infinity && current.length >= maxProductsPerJob) {
+          notifyPlanLimit();
+          return current;
+        }
+        return [...current, id];
+      });
+      return;
+    }
+    setSelectedCollections((current) =>
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
     );
   };
 
   const toggleAll = () => {
-    const setter = resourceTab === "products" ? setSelectedProducts : setSelectedCollections;
     const rowIds = currentRows.map((row) => row.id);
-    const isAllSelected = rowIds.every((rowId) => selection.includes(rowId));
-    setter(isAllSelected ? [] : rowIds);
+    if (resourceTab === "products") {
+      const isAllSelected = rowIds.every((rowId) => selectedProducts.includes(rowId));
+      if (isAllSelected) {
+        setSelectedProducts((current) => current.filter((id) => !rowIds.includes(id)));
+        return;
+      }
+      setSelectedProducts((current) => {
+        const merged = Array.from(new Set([...current, ...rowIds]));
+        if (maxProductsPerJob !== Infinity && merged.length > maxProductsPerJob) {
+          notifyPlanLimit();
+          return merged.slice(0, maxProductsPerJob);
+        }
+        return merged;
+      });
+      return;
+    }
+    const isAllCollectionsSelected = rowIds.every((rowId) => selectedCollections.includes(rowId));
+    setSelectedCollections(
+      isAllCollectionsSelected
+        ? selectedCollections.filter((id) => !rowIds.includes(id))
+        : Array.from(new Set([...selectedCollections, ...rowIds])),
+    );
   };
 
   const clearSelection = () => {
-    const setter = resourceTab === "products" ? setSelectedProducts : setSelectedCollections;
-    setter([]);
+    if (resourceTab === "products") {
+      setSelectedProducts([]);
+    } else {
+      setSelectedCollections([]);
+    }
   };
 
   const changePage = (direction) => {
@@ -963,6 +1059,10 @@ export default function AltTextGeneratorPage() {
     const totalSelected = selectedProducts.length;
     if (!totalSelected) {
       shopify.toast.show?.("Select at least one product.");
+      return;
+    }
+    if (maxProductsPerJob !== Infinity && totalSelected > maxProductsPerJob) {
+      notifyPlanLimit();
       return;
     }
 
@@ -1099,7 +1199,14 @@ export default function AltTextGeneratorPage() {
             </s-banner>
           )}
 
-          <s-section heading="Select products">
+          <s-section
+            heading="Select products"
+            description={
+              maxProductsPerJob === Infinity
+                ? undefined
+                : `Your plan allows up to ${maxProductsPerJob.toLocaleString()} products per bulk job.`
+            }
+          >
             <s-stack direction="block" gap="base">
                 {/* Resource tabs */}
                 <s-button-group>
@@ -1155,7 +1262,16 @@ export default function AltTextGeneratorPage() {
                               : `${selection.length} selected · Clear`}
                           </s-button>
                         </s-stack>
-                      </s-grid>
+                        </s-grid>
+                        {resourceTab === "products" && maxProductsPerJob !== Infinity && (
+                          <s-text
+                            tone={productSelectionLimitReached ? "critical" : "subdued"}
+                            size="small"
+                            style={{ padding: "0 1rem" }}
+                          >
+                            Plan limit: up to {maxProductsPerJob.toLocaleString()} products per bulk job.
+                          </s-text>
+                        )}
 
                       <s-table-header-row>
                         <s-table-header>
@@ -1238,6 +1354,10 @@ export default function AltTextGeneratorPage() {
                                   ) {
                                     return;
                                   }
+                                  if (!isSelected && productSelectionLimitReached) {
+                                    notifyPlanLimit();
+                                    return;
+                                  }
                                   toggleResource(row.id);
                                 }}
                               >
@@ -1252,7 +1372,13 @@ export default function AltTextGeneratorPage() {
                                     <input
                                       type="checkbox"
                                       checked={isSelected}
-                                      onChange={() => toggleResource(row.id)}
+                                      onChange={() => {
+                                        if (!isSelected && productSelectionLimitReached) {
+                                          notifyPlanLimit();
+                                          return;
+                                        }
+                                        toggleResource(row.id);
+                                      }}
                                       aria-label={`Select ${row.title}`}
                                     />
                                     <div

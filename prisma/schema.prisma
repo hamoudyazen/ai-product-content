@@ -51,6 +51,7 @@ model Shop {
   accessToken    String?
   creditsBalance Int               @default(0)
   currentPlan    String?
+  subscriptionId String?
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   creditPurchases CreditPurchase[]

@@ -5,6 +5,7 @@ import prisma from "../db.server";
 import { authenticate, apiVersion } from "../shopify.server";
 import { getOrCreateShopCredit } from "../server/shopCredit.server";
 import { rateProductContent } from "../utils/productQuality";
+import { PLAN_CONFIG, DEFAULT_PLAN } from "../utils/planConfig";
 import { calculateWorkItems } from "../utils/creditMath";
 
 const stripHtmlTags = (input) =>
@@ -434,12 +435,14 @@ export const loader = async ({ request }) => {
       orderBy: { createdAt: "desc" },
     });
     const creditRecord = await getOrCreateShopCredit(shopDomain);
+    const planId = creditRecord?.currentPlan || DEFAULT_PLAN;
     return {
       collections,
       hasActiveJob: Boolean(activeJob),
       activeJobId: activeJob?.id ?? null,
       hostParam,
       creditBalance: creditRecord?.creditsBalance ?? 0,
+      planId,
     };
   } catch (error) {
     console.error("Failed to load collections for bulk generation", error);
@@ -449,6 +452,7 @@ export const loader = async ({ request }) => {
       activeJobId: null,
       hostParam,
       creditBalance: 0,
+      planId: DEFAULT_PLAN,
     };
   }
 };
@@ -460,6 +464,7 @@ export default function BulkGenerationPage() {
     activeJobId: initialActiveJobId = null,
     hostParam,
     creditBalance = 0,
+    planId: initialPlanId = DEFAULT_PLAN,
   } = useLoaderData();
   const navigate = useNavigate();
   const shopify = useAppBridge();
@@ -510,9 +515,13 @@ export default function BulkGenerationPage() {
       return acc;
     }, {});
   }, []);
-  const [selectedCollections, setSelectedCollections] = useState(
-    collectionRows.map((collection) => collection.id),
-  );
+  const [selectedCollections, setSelectedCollections] = useState([]);
+  const [planId, setPlanId] = useState(initialPlanId);
+  useEffect(() => {
+    setPlanId(initialPlanId);
+  }, [initialPlanId]);
+  const planConfig = PLAN_CONFIG[planId] || PLAN_CONFIG[DEFAULT_PLAN];
+  const maxCollectionsPerJob = planConfig?.maxProductsPerJob ?? Infinity;
   const [page, setPage] = useState(1);
   const [selectedTypes, setSelectedTypes] = useState(generationTypes.map((type) => type.id));
   const selectedFields = useMemo(
@@ -616,8 +625,22 @@ export default function BulkGenerationPage() {
     currentPage * PAGE_SIZE,
   );
   useEffect(() => {
-    setSelectedCollections(collectionRows.map((collection) => collection.id));
-  }, [collectionRows]);
+    setSelectedCollections((current) => {
+      const validIds = collectionRows.map((collection) => collection.id);
+      const filtered = current.filter((id) => validIds.includes(id));
+      if (!filtered.length && validIds.length) {
+        const defaults =
+          maxCollectionsPerJob === Infinity
+            ? validIds
+            : validIds.slice(0, maxCollectionsPerJob);
+        return defaults;
+      }
+      if (maxCollectionsPerJob !== Infinity && filtered.length > maxCollectionsPerJob) {
+        return filtered.slice(0, maxCollectionsPerJob);
+      }
+      return filtered;
+    });
+  }, [collectionRows, maxCollectionsPerJob]);
 
   useEffect(() => {
     setPage(1);
@@ -632,6 +655,8 @@ export default function BulkGenerationPage() {
   };
 
   const selectedCollectionCount = selectedCollections.length;
+  const collectionLimitReached =
+    maxCollectionsPerJob !== Infinity && selectedCollectionCount >= maxCollectionsPerJob;
   const collectionLabel = selectedCollectionCount === 1 ? "collection" : "collections";
   const totalWorkItems = calculateWorkItems(selectedCollectionCount, selectedFields);
   const insufficientCredits = totalWorkItems > 0 && creditBalance < totalWorkItems;
@@ -675,16 +700,43 @@ export default function BulkGenerationPage() {
     setPage((current) => Math.min(current, totalPages));
   }, [totalPages]);
 
-  const toggleResource = (id) => {
-    setSelectedCollections((current) =>
-      current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
+  const notifyPlanLimit = () => {
+    if (maxCollectionsPerJob === Infinity) {
+      return;
+    }
+    shopify.toast.show?.(
+      `Your ${planConfig.title} plan supports up to ${maxCollectionsPerJob.toLocaleString()} items per bulk job.`,
     );
+  };
+
+  const toggleResource = (id) => {
+    setSelectedCollections((current) => {
+      if (current.includes(id)) {
+        return current.filter((value) => value !== id);
+      }
+      if (maxCollectionsPerJob !== Infinity && current.length >= maxCollectionsPerJob) {
+        notifyPlanLimit();
+        return current;
+      }
+      return [...current, id];
+    });
   };
 
   const toggleAll = () => {
     const rowIds = currentRows.map((row) => row.id);
     const isAllSelected = rowIds.every((rowId) => selection.includes(rowId));
-    setSelectedCollections(isAllSelected ? [] : rowIds);
+    if (isAllSelected) {
+      setSelectedCollections((current) => current.filter((id) => !rowIds.includes(id)));
+      return;
+    }
+    setSelectedCollections((current) => {
+      const merged = Array.from(new Set([...current, ...rowIds]));
+      if (maxCollectionsPerJob !== Infinity && merged.length > maxCollectionsPerJob) {
+        notifyPlanLimit();
+        return merged.slice(0, maxCollectionsPerJob);
+      }
+      return merged;
+    });
   };
 
   const clearCollectionSelection = () => {
@@ -710,6 +762,10 @@ export default function BulkGenerationPage() {
     const totalSelected = selectedCollections.length;
     if (!totalSelected || selectedFields.length === 0) {
       shopify.toast.show?.("Select at least one collection and output type.");
+      return;
+    }
+    if (maxCollectionsPerJob !== Infinity && totalSelected > maxCollectionsPerJob) {
+      notifyPlanLimit();
       return;
     }
 
@@ -818,7 +874,14 @@ export default function BulkGenerationPage() {
             </s-banner>
           )}
 
-          <s-section heading="Select collections">
+          <s-section
+            heading="Select collections"
+            description={
+              maxCollectionsPerJob === Infinity
+                ? undefined
+                : `Your plan allows up to ${maxCollectionsPerJob.toLocaleString()} collections per bulk job.`
+            }
+          >
             <s-stack direction="block" gap="base">
 
               {!hasCollections && (
@@ -864,7 +927,16 @@ export default function BulkGenerationPage() {
                           ? "0 selected"
                           : `${selection.length} selected · Clear`}
                       </s-button>
-                    </s-grid>
+                        </s-grid>
+                        {maxCollectionsPerJob !== Infinity && (
+                          <s-text
+                            tone={collectionLimitReached ? "critical" : "subdued"}
+                            size="small"
+                            style={{ padding: "0 1rem" }}
+                          >
+                            Plan limit: up to {maxCollectionsPerJob.toLocaleString()} collections per bulk job.
+                          </s-text>
+                        )}
 
                     <s-table-header-row>
                       <s-table-header>

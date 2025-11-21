@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useFetcher, useLoaderData, useNavigate, useLocation } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
+import { Redirect } from "@shopify/app-bridge/actions";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
@@ -13,6 +14,8 @@ import {
   recordPendingPurchase,
 } from "../server/creditPurchase.server";
 import { aggregateProductQuality } from "../utils/productQuality";
+import { PricingCard } from "../components/PricingCard";
+import { PLAN_OPTIONS, PLAN_CONFIG, DEFAULT_PLAN } from "../utils/planConfig";
 
 const HOST_STORAGE_KEY = "shopify-app-host";
 const JOBS_PAGE_SIZE = 5;
@@ -27,7 +30,7 @@ const generationTypeLabelMap = {
   collectionMetaDescription: "Collection meta description",
   collectionMetaTitle: "Collection meta title",
 };
-const INITIAL_FREE_CREDITS = 1000;
+const INITIAL_FREE_CREDITS = 5;
 const WORDS_PER_CREDIT = 120;
 const MIN_CREDIT_PURCHASE = 100;
 const CREDIT_STEP = 100;
@@ -195,6 +198,7 @@ export const loader = async ({ request }) => {
     hostParam,
     creditBalance: creditRecord?.creditsBalance ?? 0,
     creditSync: { added: creditsFromSync },
+    plan: creditRecord?.currentPlan || DEFAULT_PLAN,
   };
 };
 
@@ -301,12 +305,36 @@ export const action = async ({ request }) => {
     };
   }
 
-  return {
-    creditPurchase: {
-      success: false,
-      message: "Unsupported action.",
-    },
-  };
+  if (intent === "changePlan") {
+    const requestedPlan = String(formData.get("plan") || "").toUpperCase();
+    if (!PLAN_CONFIG[requestedPlan]) {
+      return {
+        planChange: {
+          success: false,
+          message: "Unknown plan selection.",
+        },
+      };
+    }
+    const planCredits = PLAN_CONFIG[requestedPlan]?.creditsPerMonth || 0;
+    await prisma.shop.update({
+      where: { shopDomain },
+      data: {
+        currentPlan: requestedPlan,
+        creditsBalance: {
+          increment: Math.max(0, planCredits),
+        },
+      },
+    });
+    return {
+      planChange: {
+        success: true,
+        plan: requestedPlan,
+        creditsAdded: planCredits,
+      },
+    };
+  }
+
+  return { error: "Unsupported action." };
 };
 
 export default function Index() {
@@ -315,6 +343,7 @@ export default function Index() {
     loaderData?.ratingSummary ?? { averageScore: null, label: null, sampleSize: 0 };
   const initialJobs = useMemo(() => loaderData?.jobs ?? [], [loaderData?.jobs]);
   const initialCreditBalance = loaderData?.creditBalance ?? INITIAL_FREE_CREDITS;
+  const initialPlanId = loaderData?.plan || DEFAULT_PLAN;
   const [embeddedHost, setEmbeddedHost] = useState(() => loaderData?.hostParam ?? null);
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -353,13 +382,48 @@ export default function Index() {
   );
   const fetcher = useFetcher();
   const creditFetcher = useFetcher();
+  const planFetcher = useFetcher();
+  const billingCallbackFetcher = useFetcher();
   const navigate = useNavigate();
   const shopify = useAppBridge();
+  const redirect = useMemo(() => (shopify ? Redirect.create(shopify) : null), [shopify]);
   const location = useLocation();
+  const [billingCallbackTriggered, setBillingCallbackTriggered] = useState(false);
+  const redirectToUrl = useCallback(
+    (url) => {
+      if (!url) return;
+      if (redirect && typeof redirect.dispatch === "function") {
+        try {
+          redirect.dispatch(Redirect.Action.REMOTE, { url });
+          return;
+        } catch (error) {
+          console.error("[billing] Failed to dispatch App Bridge redirect", error);
+        }
+      }
+      if (typeof window !== "undefined") {
+        try {
+          if (window.top && window.top !== window) {
+            window.top.location.href = url;
+            return;
+          }
+        } catch (error) {
+          console.warn("[billing] Unable to access top window for redirect", error);
+        }
+        const newWindow = window.open(url, "_blank", "noopener,noreferrer");
+        if (newWindow) {
+          newWindow.focus?.();
+        } else {
+          window.location.assign(url);
+        }
+      }
+    },
+    [redirect],
+  );
   const [jobs, setJobs] = useState(initialJobs);
   const [jobsPage, setJobsPage] = useState(0);
   const [creditAmount, setCreditAmount] = useState("1000");
   const [creditBalance, setCreditBalance] = useState(initialCreditBalance);
+  const [currentPlanId, setCurrentPlanId] = useState(initialPlanId);
   const [usageStats, setUsageStats] = useState(() =>
     deriveUsageStats(initialJobs, initialCreditBalance),
   );
@@ -368,6 +432,24 @@ export default function Index() {
     setCreditBalance(initialCreditBalance);
     setUsageStats(deriveUsageStats(initialJobs, initialCreditBalance));
   }, [initialJobs, initialCreditBalance]);
+
+  useEffect(() => {
+    setCurrentPlanId(initialPlanId);
+  }, [initialPlanId]);
+  useEffect(() => {
+    const billing = planFetcher.data?.billing;
+    if (!billing || planFetcher.state !== "idle") {
+      return;
+    }
+    if (billing.error) {
+      shopify.toast.show?.(billing.error);
+      return;
+    }
+    if (!billing?.confirmationUrl) {
+      return;
+    }
+    redirectToUrl(billing.confirmationUrl);
+  }, [planFetcher.data, planFetcher.state, redirectToUrl]);
 
   const fetchJobs = useCallback(async () => {
     try {
@@ -441,13 +523,127 @@ export default function Index() {
       return;
     }
     if (result?.confirmationUrl) {
-      window.top?.location.replace(result.confirmationUrl);
+      redirectToUrl(result.confirmationUrl);
       return;
     }
     if (result?.message) {
       shopify.toast.show?.(result.message);
     }
-  }, [creditFetcher.data, creditFetcher.state, shopify]);
+  }, [creditFetcher.data, creditFetcher.state, redirectToUrl, shopify]);
+
+  useEffect(() => {
+    const planChange = planFetcher.data?.planChange;
+    if (!planChange || planFetcher.state !== "idle") {
+      return;
+    }
+    if (planChange.success && planChange.plan) {
+      setCurrentPlanId(planChange.plan);
+      const label = PLAN_CONFIG[planChange.plan]?.title || planChange.plan;
+      const creditMsg =
+        typeof planChange.creditsAdded === "number" && planChange.creditsAdded > 0
+          ? ` Added ${planChange.creditsAdded.toLocaleString()} credits to your balance.`
+          : "";
+      shopify.toast.show?.(`Plan updated to ${label}.${creditMsg}`);
+    } else if (planChange.message) {
+      shopify.toast.show?.(planChange.message);
+    }
+  }, [planFetcher.data, planFetcher.state, shopify]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const subscriptionId =
+      params.get("subscription_id") || params.get("charge_id");
+    if (!subscriptionId || billingCallbackTriggered) {
+      return;
+    }
+    const formData = new FormData();
+    formData.set("subscriptionId", subscriptionId);
+    const planParam = params.get("plan");
+    if (planParam) {
+      formData.set("plan", planParam);
+    }
+    const shopParam = params.get("shop");
+    if (shopParam) {
+      formData.set("shop", shopParam);
+    }
+    const hostParam = params.get("host");
+    if (hostParam) {
+      formData.set("host", hostParam);
+    }
+    billingCallbackFetcher.submit(formData, {
+      method: "post",
+      action: withHost("/app/billing/callback"),
+    });
+    setBillingCallbackTriggered(true);
+  }, [
+    billingCallbackFetcher,
+    billingCallbackTriggered,
+    location.search,
+    withHost,
+  ]);
+
+  useEffect(() => {
+    if (
+      billingCallbackFetcher.state === "idle" &&
+      billingCallbackFetcher.data?.success === false
+    ) {
+      setBillingCallbackTriggered(false);
+    }
+  }, [billingCallbackFetcher.data, billingCallbackFetcher.state]);
+
+  useEffect(() => {
+    if (billingCallbackFetcher.state !== "idle") {
+      return;
+    }
+    const result = billingCallbackFetcher.data;
+    if (!result) {
+      return;
+    }
+    if (result.success) {
+      const planLabel = PLAN_CONFIG[result.plan]?.title || result.plan || "Plan";
+      const creditMsg =
+        typeof result.creditsAdded === "number" && result.creditsAdded > 0
+          ? ` Added ${result.creditsAdded.toLocaleString()} credits to your balance.`
+          : "";
+      shopify.toast.show?.(`${planLabel} activated.${creditMsg}`);
+      if (result.plan) {
+        setCurrentPlanId(result.plan);
+      }
+    } else if (result.message) {
+      shopify.toast.show?.(result.message);
+    }
+  }, [billingCallbackFetcher.data, billingCallbackFetcher.state, shopify]);
+
+  useEffect(() => {
+    if (!billingCallbackTriggered) {
+      return;
+    }
+    if (billingCallbackFetcher.state !== "idle") {
+      return;
+    }
+    const params = new URLSearchParams(location.search);
+    const keysToRemove = ["subscription_id", "charge_id", "plan", "shop"];
+    let cleaned = false;
+    keysToRemove.forEach((key) => {
+      if (params.has(key)) {
+        params.delete(key);
+        cleaned = true;
+      }
+    });
+    if (!cleaned) {
+      return;
+    }
+    navigate(
+      { pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : "" },
+      { replace: true },
+    );
+  }, [
+    billingCallbackFetcher.state,
+    billingCallbackTriggered,
+    location.pathname,
+    location.search,
+    navigate,
+  ]);
 
   useEffect(() => {
     const addedFromSync = loaderData?.creditSync?.added ?? 0;
@@ -461,30 +657,59 @@ export default function Index() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const creditStatus = params.get("creditStatus");
-    if (!creditStatus) {
-      return;
+    if (creditStatus) {
+      params.delete("creditStatus");
+      let creditMessage = null;
+      if (creditStatus === "success") {
+        creditMessage = "Credits added to your balance.";
+      } else if (creditStatus === "declined") {
+        creditMessage = "Payment was not completed. Please try again.";
+      } else if (creditStatus === "error") {
+        creditMessage =
+          "We couldn't verify that payment. Contact support if it succeeded.";
+      } else if (creditStatus === "missing") {
+        creditMessage = "Missing purchase details from Shopify checkout.";
+      }
+      if (creditMessage) {
+        shopify.toast.show?.(creditMessage);
+      }
     }
-    params.delete("creditStatus");
-    let message = null;
-    if (creditStatus === "success") {
-      message = "Credits added to your balance.";
-    } else if (creditStatus === "declined") {
-      message = "Payment was not completed. Please try again.";
-    } else if (creditStatus === "error") {
-      message = "We couldn't verify that payment. Contact support if it succeeded.";
-    } else if (creditStatus === "missing") {
-      message = "Missing purchase details from Shopify checkout.";
+    const planStatus = params.get("planStatus");
+    if (planStatus) {
+      params.delete("planStatus");
+      const planParam = params.get("plan");
+      const creditsParam = Number(params.get("planCredits") || 0);
+      params.delete("plan");
+      params.delete("planCredits");
+      let planMessage = null;
+      if (planStatus === "success") {
+        const planLabel = PLAN_CONFIG[planParam]?.title || planParam || "Plan";
+        const creditsNote =
+          creditsParam > 0
+            ? ` Added ${creditsParam.toLocaleString()} credits to your balance.`
+            : "";
+        planMessage = `${planLabel} activated.${creditsNote}`;
+      } else if (planStatus === "declined") {
+        planMessage =
+          "Plan activation was not completed. Please try again or contact support.";
+      } else if (planStatus === "error") {
+        planMessage = "We couldn't verify that subscription. Please try again later.";
+      }
+      if (planMessage) {
+        shopify.toast.show?.(planMessage);
+      }
     }
-    if (message) {
-      shopify.toast.show?.(message);
+    if (creditStatus || planStatus) {
+      navigate(
+        { pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : "" },
+        { replace: true },
+      );
     }
-    navigate(
-      { pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : "" },
-      { replace: true },
-    );
   }, [location, navigate, shopify]);
-  const goToBulkGeneration = () => navigate("/app/bulk-generation");
-  const goToCollectionBulkGeneration = () => navigate("/app/collections-bulk-generation");
+  const goToBulkGeneration = () =>
+    navigate(withHost("/app/bulk-generation"));
+  const goToCollectionBulkGeneration = () =>
+    navigate(withHost("/app/collections-bulk-generation"));
   const hasJobs = sortedJobs.length > 0;
   const creditPackages = QUICK_SELECT_PACKAGES;
   const pricePerCredit = 0.005;
@@ -513,6 +738,16 @@ export default function Index() {
     : "Generate or sync products to calculate a rating.";
   const ratingBadgeTone =
     ratingLabel === "Great" ? "success" : ratingLabel === "OK" ? "attention" : "critical";
+  const activePlan = PLAN_CONFIG[currentPlanId] || PLAN_CONFIG[DEFAULT_PLAN];
+  const planLimitText =
+    typeof activePlan?.maxProductsPerJob === "number"
+      ? `Max ${activePlan.maxProductsPerJob.toLocaleString()} products/bulk job`
+      : null;
+  const planCreditsText =
+    typeof activePlan?.creditsPerMonth === "number"
+      ? `${activePlan.creditsPerMonth.toLocaleString()} credits/month`
+      : null;
+  const planSubmittingId = planFetcher.formData?.get?.("plan")?.toString() || null;
 
   const handlePurchaseCredits = () => {
     if (!isValidCreditAmount || creditPurchaseLoading) {
@@ -530,21 +765,62 @@ export default function Index() {
 
   return (
     <s-page heading="Shopify app template">
-      <s-button-group slot="secondary-actions">
-        <s-button variant="secondary" onClick={goToBulkGeneration}>
-          Product bulk generation
+        <s-button variant="primary" commandFor="upgrade-plan-modal">
+          Upgrade plan
         </s-button>
-        <s-button variant="secondary" onClick={goToCollectionBulkGeneration}>
-          Collection bulk generation
-        </s-button>
-      </s-button-group>
-      <s-button
-        slot="primary-action"
-        variant="primary"
-        commandFor="add-credit-modal"
-      >
+      <s-button slot="primary-action" variant="primary" commandFor="add-credit-modal">
         Add credit
       </s-button>
+
+      <s-modal id="upgrade-plan-modal" heading="Upgrade plan">
+        <s-stack direction="block" gap="base">
+          <s-text appearance="subdued">
+            Choose the billing plan that fits your current catalog and switch anytime.
+          </s-text>
+          <s-stack
+            direction="inline"
+            gap="base"
+            style={{ justifyContent: "flex-start", width: "100%", flexWrap: "wrap" }}
+          >
+            {PLAN_OPTIONS.map((plan) => {
+              const isCurrent = plan.id === currentPlanId;
+              const submittingThisPlan =
+                planFetcher.state !== "idle" && planSubmittingId === plan.id;
+              const props = {
+                variant: isCurrent ? "secondary" : "primary",
+                disabled: isCurrent || planFetcher.state !== "idle",
+                ...(submittingThisPlan ? { loading: true } : {}),
+              };
+              if (!isCurrent) {
+                props.onClick = () =>
+                  planFetcher.submit(
+                    { plan: plan.id },
+                    {
+                      method: "post",
+                      action: withHost("/app/billing/start"),
+                    },
+                  );
+              }
+              return (
+                <PricingCard
+                  key={plan.id}
+                  title={plan.title}
+                  description={plan.description}
+                  features={plan.features}
+                  price={plan.price}
+                  frequency={plan.frequency}
+                  featuredText={plan.badge}
+                  button={{
+                    content: isCurrent ? "Current plan" : "Select plan",
+                    props,
+                  }}
+                />
+              );
+            })}
+          </s-stack>
+        </s-stack>
+      </s-modal>
+
       <s-modal id="add-credit-modal" heading="Add credits">
         <s-stack direction="block" gap="base">
           <s-stack direction="block" gap="extra-tight">
@@ -783,6 +1059,36 @@ export default function Index() {
                   style={{ cursor: "pointer" }}
                 />
               </div>
+              </s-stack>
+            </s-box>
+          </s-grid-item>
+          <s-grid-item gridColumn="span 1">
+            <s-box background="strong" padding="base" borderRadius="base">
+              <s-stack direction="block" gap="tight">
+                <s-stack direction="inline" gap="tight" align="center">
+                  <s-icon type="plan" tone="success" size="large" />
+                  <s-text variant="headingSm">
+                    <s-text type="strong">Current plan</s-text>
+                  </s-text>
+                </s-stack>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                  <s-text variant="headingLg" type="strong">
+                    {activePlan.title}
+                  </s-text>
+                  <s-text appearance="subdued">{activePlan.description}</s-text>
+                  <s-stack direction="inline" gap="tight" style={{ flexWrap: "wrap" }}>
+                    {planCreditsText && (
+                      <s-badge tone="info" appearance="subdued">
+                        {planCreditsText}
+                      </s-badge>
+                    )}
+                    {planLimitText && (
+                      <s-badge tone="info" appearance="subdued">
+                        {planLimitText}
+                      </s-badge>
+                    )}
+                  </s-stack>
+                </div>
               </s-stack>
             </s-box>
           </s-grid-item>

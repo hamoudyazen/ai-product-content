@@ -2,6 +2,7 @@ import { redirect } from "react-router";
 import prisma from "../db.server";
 import { authenticate, sessionStorage } from "../shopify.server";
 import { reserveShopCredits } from "../server/shopCredit.server";
+import { DEFAULT_PLAN, getPlanConfig } from "../utils/planConfig";
 import {
   ALT_TEXT_FIELD_ALLOWLIST,
   COLLECTION_FIELD_ALLOWLIST,
@@ -76,6 +77,13 @@ export const action = async ({ request }) => {
     throw respondJson({ error: "No offline session available for this shop." }, 503);
   }
 
+  const shopRecord = await prisma.shop.findUnique({
+    where: { shopDomain },
+    select: { currentPlan: true },
+  });
+  const currentPlanId = shopRecord?.currentPlan || DEFAULT_PLAN;
+  const planConfig = getPlanConfig(currentPlanId);
+
   const jobType = collectionIds.length ? "collections" : "products";
   const isAltTextTask = settings.task === "alt_text";
   if (isAltTextTask && jobType !== "products") {
@@ -100,6 +108,15 @@ export const action = async ({ request }) => {
   }
 
   const targetCount = jobType === "collections" ? collectionIds.length : productIds.length;
+
+  if (jobType === "products" && productIds.length > planConfig.maxProductsPerJob) {
+    throw respondJson(
+      {
+        error: `Your ${planConfig.title} plan supports up to ${planConfig.maxProductsPerJob} products per bulk job. Reduce your selection or upgrade your plan.`,
+      },
+      422,
+    );
+  }
   let totalItems = 0;
 
   let sanitizedSettings = {

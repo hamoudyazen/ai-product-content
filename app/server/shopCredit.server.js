@@ -1,6 +1,7 @@
 import prisma from "../db.server";
+import { DEFAULT_PLAN } from "../utils/planConfig";
 
-const DEFAULT_CREDITS = Number(process.env.INITIAL_SHOP_CREDITS || 1000);
+const DEFAULT_CREDITS = Number(process.env.INITIAL_SHOP_CREDITS || 5);
 
 const normalizeAmount = (value) => {
   if (!Number.isFinite(value)) {
@@ -16,6 +17,12 @@ export const getOrCreateShopCredit = async (shopDomain) => {
 
   const existing = await prisma.shop.findUnique({ where: { shopDomain } });
   if (existing) {
+    if (!existing.currentPlan) {
+      return prisma.shop.update({
+        where: { shopDomain },
+        data: { currentPlan: DEFAULT_PLAN },
+      });
+    }
     return existing;
   }
 
@@ -39,6 +46,7 @@ export const getOrCreateShopCredit = async (shopDomain) => {
     data: {
       shopDomain,
       creditsBalance: legacyCredits,
+      currentPlan: DEFAULT_PLAN,
     },
   });
 };

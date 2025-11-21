@@ -20,7 +20,6 @@ export default function App() {
         <s-link href="/app/bulk-generation">Bulk generation</s-link>
         <s-link href="/app/alt-text-generator">Alt text generator</s-link>
         <s-link href="/app/collections-bulk-generation">Collection bulk</s-link>
-        <s-link href="/app/settings">Settings</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>
