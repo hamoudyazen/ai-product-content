@@ -386,6 +386,20 @@ export default function Index() {
   const billingCallbackFetcher = useFetcher();
   const navigate = useNavigate();
   const shopify = useAppBridge();
+  const [appBridgeToast, setAppBridgeToast] = useState(null);
+  useEffect(() => {
+    if (!shopify) {
+      setAppBridgeToast(null);
+      return;
+    }
+
+    try {
+      setAppBridgeToast(shopify.toast ?? null);
+    } catch (error) {
+      console.warn("[billing] Unable to read App Bridge toast", error);
+      setAppBridgeToast(null);
+    }
+  }, [shopify]);
   const redirect = useMemo(() => (shopify ? Redirect.create(shopify) : null), [shopify]);
   const location = useLocation();
   const [billingCallbackTriggered, setBillingCallbackTriggered] = useState(false);
@@ -442,14 +456,14 @@ export default function Index() {
       return;
     }
     if (billing.error) {
-      shopify.toast.show?.(billing.error);
+      appBridgeToast?.show?.(billing.error);
       return;
     }
     if (!billing?.confirmationUrl) {
       return;
     }
     redirectToUrl(billing.confirmationUrl);
-  }, [planFetcher.data, planFetcher.state, redirectToUrl]);
+  }, [planFetcher.data, planFetcher.state, redirectToUrl, appBridgeToast]);
 
   const fetchJobs = useCallback(async () => {
     try {
@@ -514,9 +528,9 @@ export default function Index() {
 
   useEffect(() => {
     if (fetcher.data?.product?.id) {
-      shopify.toast.show("Product created");
+      appBridgeToast?.show?.("Product created");
     }
-  }, [fetcher.data?.product?.id, shopify]);
+  }, [fetcher.data?.product?.id, appBridgeToast]);
   useEffect(() => {
     const result = creditFetcher.data?.creditPurchase;
     if (!result || creditFetcher.state !== "idle") {
@@ -527,9 +541,9 @@ export default function Index() {
       return;
     }
     if (result?.message) {
-      shopify.toast.show?.(result.message);
+      appBridgeToast?.show?.(result.message);
     }
-  }, [creditFetcher.data, creditFetcher.state, redirectToUrl, shopify]);
+  }, [creditFetcher.data, creditFetcher.state, redirectToUrl, appBridgeToast]);
 
   useEffect(() => {
     const planChange = planFetcher.data?.planChange;
@@ -543,11 +557,11 @@ export default function Index() {
         typeof planChange.creditsAdded === "number" && planChange.creditsAdded > 0
           ? ` Added ${planChange.creditsAdded.toLocaleString()} credits to your balance.`
           : "";
-      shopify.toast.show?.(`Plan updated to ${label}.${creditMsg}`);
+      appBridgeToast?.show?.(`Plan updated to ${label}.${creditMsg}`);
     } else if (planChange.message) {
-      shopify.toast.show?.(planChange.message);
+      appBridgeToast?.show?.(planChange.message);
     }
-  }, [planFetcher.data, planFetcher.state, shopify]);
+  }, [planFetcher.data, planFetcher.state, appBridgeToast]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -605,14 +619,14 @@ export default function Index() {
         typeof result.creditsAdded === "number" && result.creditsAdded > 0
           ? ` Added ${result.creditsAdded.toLocaleString()} credits to your balance.`
           : "";
-      shopify.toast.show?.(`${planLabel} activated.${creditMsg}`);
+      appBridgeToast?.show?.(`${planLabel} activated.${creditMsg}`);
       if (result.plan) {
         setCurrentPlanId(result.plan);
       }
     } else if (result.message) {
-      shopify.toast.show?.(result.message);
+      appBridgeToast?.show?.(result.message);
     }
-  }, [billingCallbackFetcher.data, billingCallbackFetcher.state, shopify]);
+  }, [billingCallbackFetcher.data, billingCallbackFetcher.state, appBridgeToast]);
 
   useEffect(() => {
     if (!billingCallbackTriggered) {
@@ -648,11 +662,11 @@ export default function Index() {
   useEffect(() => {
     const addedFromSync = loaderData?.creditSync?.added ?? 0;
     if (addedFromSync > 0) {
-      shopify.toast.show?.(
+      appBridgeToast?.show?.(
         `${addedFromSync.toLocaleString()} credit${addedFromSync === 1 ? "" : "s"} added to your balance.`,
       );
     }
-  }, [loaderData?.creditSync?.added, shopify]);
+  }, [loaderData?.creditSync?.added, appBridgeToast]);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -671,7 +685,7 @@ export default function Index() {
         creditMessage = "Missing purchase details from Shopify checkout.";
       }
       if (creditMessage) {
-        shopify.toast.show?.(creditMessage);
+        appBridgeToast?.show?.(creditMessage);
       }
     }
     const planStatus = params.get("planStatus");
@@ -696,7 +710,7 @@ export default function Index() {
         planMessage = "We couldn't verify that subscription. Please try again later.";
       }
       if (planMessage) {
-        shopify.toast.show?.(planMessage);
+        appBridgeToast?.show?.(planMessage);
       }
     }
     if (creditStatus || planStatus) {
@@ -705,11 +719,7 @@ export default function Index() {
         { replace: true },
       );
     }
-  }, [location, navigate, shopify]);
-  const goToBulkGeneration = () =>
-    navigate(withHost("/app/bulk-generation"));
-  const goToCollectionBulkGeneration = () =>
-    navigate(withHost("/app/collections-bulk-generation"));
+  }, [location, navigate, appBridgeToast]);
   const hasJobs = sortedJobs.length > 0;
   const creditPackages = QUICK_SELECT_PACKAGES;
   const pricePerCredit = 0.005;
@@ -765,12 +775,13 @@ export default function Index() {
 
   return (
     <s-page heading="Shopify app template">
-        <s-button variant="primary" commandFor="upgrade-plan-modal">
-          Upgrade plan
-        </s-button>
-      <s-button slot="primary-action" variant="primary" commandFor="add-credit-modal">
-        Add credit
-      </s-button>
+ <s-button slot="primary-action" variant="primary" commandFor="upgrade-plan-modal">
+    Upgrade plan
+  </s-button>
+
+  <s-button slot="secondary-actions" variant="secondary" commandFor="add-credit-modal">
+    Add credit
+  </s-button>
 
       <s-modal id="upgrade-plan-modal" heading="Upgrade plan">
         <s-stack direction="block" gap="base">

@@ -1,3 +1,4 @@
+/* global globalThis */
 import { redirect } from "react-router";
 import prisma from "../db.server";
 import { PLAN_CONFIG, DEFAULT_PLAN } from "../utils/planConfig";
@@ -22,7 +23,7 @@ const redirectToApp = (hostParam, status, extras = {}) => {
 const getShopFromHost = (hostParam) => {
   if (!hostParam) return null;
   try {
-    const decoded = Buffer.from(hostParam, "base64").toString("utf-8");
+    const decoded = globalThis.Buffer.from(hostParam, "base64").toString("utf-8");
     const [, , storeHandle] = decoded.split("/");
     if (!storeHandle) {
       return null;

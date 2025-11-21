@@ -79,7 +79,7 @@ export const action = async ({ request }) => {
   const requestUrl = new URL(request.url);
   const hostParam = requestUrl.searchParams.get("host");
   const returnUrl = new URL(
-    `/admin/apps/${process.env.SHOPIFY_API_KEY}`,
+    `/admin/apps/${globalThis.process?.env?.SHOPIFY_API_KEY}`,
     `https://${shopDomain}`,
   );
   returnUrl.searchParams.set("shop", shopDomain);

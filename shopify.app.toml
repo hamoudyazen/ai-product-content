@@ -2,7 +2,7 @@
 
 client_id = "cdd4674758844e1285f928aba80fb37a"
 name = "chatgpt-product-content"
-application_url = "https://example.com"
+application_url = "https://ai-product-content-production.up.railway.app"
 embedded = true
 
 [build]
@@ -22,7 +22,7 @@ api_version = "2026-01"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_products"
+scopes = "read_products,write_products,read_product_listings,write_product_listings,read_orders,read_customers"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://ai-product-content-production.up.railway.app/api/auth" ]

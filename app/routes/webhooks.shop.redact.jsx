@@ -2,14 +2,12 @@ import { authenticate } from "../shopify.server";
 import { wipeShopRecords, wipeShopSessions } from "../server/shopCleanup.server";
 
 export const action = async ({ request }) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+  const { shop, topic } = await authenticate.webhook(request);
 
-  console.log(`Received ${topic} webhook for ${shop}`);
+  console.log(`[${topic}] Received for ${shop}`);
 
-  if (session) {
-    await wipeShopSessions(shop);
-  }
+  await wipeShopSessions(shop);
   await wipeShopRecords(shop);
 
-  return new Response();
+  return new Response(null, { status: 200 });
 };
