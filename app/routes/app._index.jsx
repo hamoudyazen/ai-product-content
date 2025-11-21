@@ -757,6 +757,7 @@ export default function Index() {
     typeof activePlan?.creditsPerMonth === "number"
       ? `${activePlan.creditsPerMonth.toLocaleString()} credits/month`
       : null;
+  const planMetaBadges = [planCreditsText, planLimitText].filter(Boolean);
   const planSubmittingId = planFetcher.formData?.get?.("plan")?.toString() || null;
 
   const handlePurchaseCredits = () => {
@@ -1081,23 +1082,41 @@ export default function Index() {
                   <s-text variant="headingSm">
                     <s-text type="strong">Current plan</s-text>
                   </s-text>
+                  <s-tooltip id="current-plan-tooltip">
+                    Monthly credits and bulk job limits for this plan.
+                  </s-tooltip>
+                  <s-icon
+                    type="info"
+                    tone="subdued"
+                    size="small"
+                    interestFor="current-plan-tooltip"
+                    style={{ cursor: "pointer" }}
+                  />
                 </s-stack>
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                   <s-text variant="headingLg" type="strong">
                     {activePlan.title}
                   </s-text>
-                  <s-text appearance="subdued">{activePlan.description}</s-text>
-                  <s-stack direction="inline" gap="tight" style={{ flexWrap: "wrap" }}>
-                    {planCreditsText && (
-                      <s-badge tone="info" appearance="subdued">
-                        {planCreditsText}
+                  <s-stack
+                    direction="inline"
+                    gap="small"
+                    style={{ flexWrap: "wrap", marginTop: "0.5rem" }}
+                  >
+                    {planMetaBadges.map((badgeText) => (
+                      <s-badge
+                        key={badgeText}
+                        tone="info"
+                        appearance="subdued"
+                        style={{
+                          borderRadius: "999px",
+                          fontWeight: 600,
+                          padding: "0.25rem 0.75rem",
+                          fontSize: "0.95rem",
+                        }}
+                      >
+                        {badgeText}
                       </s-badge>
-                    )}
-                    {planLimitText && (
-                      <s-badge tone="info" appearance="subdued">
-                        {planLimitText}
-                      </s-badge>
-                    )}
+                    ))}
                   </s-stack>
                 </div>
               </s-stack>
