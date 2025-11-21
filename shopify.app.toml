@@ -22,7 +22,7 @@ api_version = "2025-01"
 
   [[webhooks.subscriptions]]
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
-  uri = "https://ai-product-content-production.up.railway.app/webhooks/gdpr"
+  uri = "/webhooks/gdpr"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
