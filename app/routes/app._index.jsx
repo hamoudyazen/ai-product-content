@@ -786,7 +786,7 @@ export default function Index() {
       <s-modal id="upgrade-plan-modal" heading="Upgrade plan">
         <s-stack direction="block" gap="base">
           <s-text appearance="subdued">
-            Choose the billing plan that fits your current catalog and switch anytime.
+            Choose the billing plan that fits your current catalog and switch anytime .
           </s-text>
           <s-stack
             direction="inline"
