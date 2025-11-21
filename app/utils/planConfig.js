@@ -19,8 +19,6 @@ export const PLAN_CONFIG = {
     features: [
       "2,500 credits/month",
       "Max 200 products per bulk job",
-      "Basic templates",
-      "Basic history",
       "Standard support",
     ],
     price: "$12",
@@ -37,9 +35,6 @@ export const PLAN_CONFIG = {
     features: [
       "13,000 credits/month",
       "Max 750 products per bulk job",
-      "Unlimited templates",
-      "30-day history",
-      "Priority queue",
       "Priority support",
     ],
     price: "$45",
@@ -55,9 +50,6 @@ export const PLAN_CONFIG = {
     features: [
       "115,000 credits/month",
       "Max 3,000 products per bulk job",
-      "Unlimited templates",
-      "Full history",
-      "Fastest queue priority",
       "Priority voice/email support",
     ],
     price: "$190",

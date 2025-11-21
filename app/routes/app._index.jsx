@@ -794,10 +794,10 @@ export default function Index() {
             gap="base"
             style={{ justifyContent: "flex-start", width: "100%", flexWrap: "wrap" }}
           >
-            {PLAN_OPTIONS.map((plan) => {
-              const isCurrent = plan.id === currentPlanId;
-              const submittingThisPlan =
-                planFetcher.state !== "idle" && planSubmittingId === plan.id;
+              {PLAN_OPTIONS.map((plan) => {
+                const isCurrent = plan.id === currentPlanId;
+                const submittingThisPlan =
+                  planFetcher.state !== "idle" && planSubmittingId === plan.id;
               const props = {
                 variant: isCurrent ? "secondary" : "primary",
                 disabled: isCurrent || planFetcher.state !== "idle",
@@ -814,19 +814,20 @@ export default function Index() {
                   );
               }
               return (
-                <PricingCard
-                  key={plan.id}
-                  title={plan.title}
-                  description={plan.description}
-                  features={plan.features}
-                  price={plan.price}
-                  frequency={plan.frequency}
-                  featuredText={plan.badge}
-                  button={{
-                    content: isCurrent ? "Current plan" : "Select plan",
-                    props,
-                  }}
-                />
+              <PricingCard
+                key={plan.id}
+                title={plan.title}
+                description={plan.description}
+                features={plan.features}
+                price={plan.price}
+                frequency={plan.frequency}
+                featuredText={plan.badge}
+                button={{
+                  content: isCurrent ? "Current plan" : "Select plan",
+                  props,
+                }}
+                isCurrent={isCurrent}
+              />
               );
             })}
           </s-stack>
