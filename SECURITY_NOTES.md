@@ -1,0 +1,7 @@
+# Security Notes
+
+- **Secrets stay server-side**: Shopify admin API credentials, offline session tokens, and the OpenAI API key are only referenced on the server (`app/shopify.server.js`, `app/utils/openai.server.js`). Loaders that hydrate the UI expose at most the public Shopify API key required by the embedded App Bridge. We never echo tokens, keys, or full OpenAI responses to logs or the browser.
+- **Job validation & credit gating**: Every async job routes through `app/routes/app.jobs.create.jsx`, which validates Shopify resource IDs, allowed output fields, and input counts before reserving credits. Jobs without a valid shop domain, unsupported fields, or insufficient balance are rejected early.
+- **Background workers**: `app/server/bulkJobWorker.js` processes one job at a time to avoid tripping Shopify GraphQL limits. Per-item try/catch blocks in each processor prevent unhandled promise rejections and keep access tokens from leaking into stack traces.
+- **Webhooks**: `app/routes/webhooks.app.scopes_update.jsx` and `.uninstalled.jsx` rely on Shopify's built-in HMAC verification via `authenticate.webhook`. These routes do not persist secret data; they log only the topic and shop for audit visibility.
+- **Rate limiting & retries**: Shopify GraphQL calls are batched per job item, and failures trigger credit refunds plus a failed job record in `BulkJob`. OpenAI requests use a shared helper that enforces deterministic temperature/model settings so responses remain predictable.
