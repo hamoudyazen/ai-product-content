@@ -1,32 +1,35 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
-
 client_id = "cdd4674758844e1285f928aba80fb37a"
-name = "chatgpt-product-content"
+name = "AI Product Content Studio"
 application_url = "https://ai-product-content-production.up.railway.app"
 embedded = true
 
-[build]
-automatically_update_urls_on_dev = true
-include_config_on_deploy = true
-
 [webhooks]
+# Use a stable version, not a future RC
 api_version = "2025-01"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
+  topics = ["app/uninstalled"]
   uri = "/webhooks/app/uninstalled"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/scopes_update" ]
+  topics = ["app/scopes_update"]
   uri = "/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
-  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+  compliance_topics = [
+    "customers/data_request",
+    "customers/redact",
+    "shop/redact"
+  ]
   uri = "/webhooks/gdpr"
 
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_products,write_products,read_product_listings,write_product_listings,read_orders,read_customers"
+# You need customer/order read scopes to even get GDPR webhooks
+scopes = "read_products,write_products,read_product_listings,write_product_listings,read_customers,read_orders"
+optional_scopes = []
+use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://ai-product-content-production.up.railway.app/api/auth" ]
+redirect_urls = [
+  "https://ai-product-content-production.up.railway.app/auth/callback"
+]
